@@ -1201,6 +1201,8 @@ github.com/envoyproxy/protoc-gen-validate v0.9.1/go.mod h1:OKNgG7TCp5pF4d6XftA0+
 github.com/envoyproxy/protoc-gen-validate v0.10.1/go.mod h1:DRjgyB0I43LtJapqN6NiRwroiAU2PaFuvk/vjgh61ss=
 github.com/envoyproxy/protoc-gen-validate v1.3.3 h1:MVQghNeW+LZcmXe7SY1V36Z+WFMDjpqGAGacLe2T0ds=
 github.com/envoyproxy/protoc-gen-validate v1.3.3/go.mod h1:TsndJ/ngyIdQRhMcVVGDDHINPLWB7C82oDArY51KfB0=
+github.com/expo21xx/go-ads v0.1.0 h1:znuDGRGB6qtVarTEy6OLTaGvNSzvqFCTFN29g7TlK2A=
+github.com/expo21xx/go-ads v0.1.0/go.mod h1:/YcuiQi31l+0W8TKVCXIdUXILMbjsXC6ovhGqprEVg8=
 github.com/facebook/time v0.0.0-20250903103710-a5911c32cdb9 h1:IghB0/AakzNKu4+KBY+RT7J4TiMXwmZ1DCzOTR+0wmQ=
 github.com/facebook/time v0.0.0-20250903103710-a5911c32cdb9/go.mod h1:bp0KsBqhjbum8LF5Canem6aGBHWk5EGZRRN7z3rMp0E=
 github.com/facebookgo/stack v0.0.0-20160209184415-751773369052 h1:JWuenKqqX8nojtoVVWjGfOF9635RETekkoH6Cc9SX0A=
