@@ -11,19 +11,12 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-type SymbolConfig struct {
-	Name        string `toml:"name"`         // The exact TwinCAT symbol (e.g., MAIN.Temperature)
-	Key         string `toml:"key"`          // The canonical field name for InfluxDB (e.g., temp_celsius)
-	DisplayName string `toml:"display_name"` // Friendly name for Grafana
-	Unit        string `toml:"unit"`         // Engineering unit
-}
-
 type ADS struct {
-	IP          string         `toml:"ip"`
-	NetID       string         `toml:"netid"`
-	Port        int            `toml:"port"`
-	SourceNetID string         `toml:"source_netid"`
-	Symbols     []SymbolConfig `toml:"symbols"`
+	IP          string   `toml:"ip"`
+	NetID       string   `toml:"netid"`
+	Port        int      `toml:"port"`
+	SourceNetID string   `toml:"source_netid"`
+	Symbols     []string `toml:"symbols"`
 
 	client *goads.Client
 }
@@ -37,17 +30,15 @@ func (a *ADS) SampleConfig() string {
   ip = "127.0.0.1"
   netid = "192.168.1.10.1.1"
   port = 851
-  source_netid = "192.168.1.10.1.99"
-
-  [[inputs.ads.symbol]]
-    name = "MAIN.Temperature"
-    key = "temperature"
-    display_name = "Zone 1 Temp"
-    unit = "C"
+  source_netid = "192.168.1.10.1.3"
+  symbols = [
+    "MAIN.Temperature"
+  ]
 `
 }
 
 func (a *ADS) Start(acc telegraf.Accumulator) error {
+	// NO symbol loading options. We will do it manually.
 	opts := []goads.Option{}
 
 	if a.SourceNetID != "" {
