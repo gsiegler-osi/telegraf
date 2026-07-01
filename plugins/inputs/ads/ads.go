@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 
 	goads "github.com/expo21xx/go-ads"
@@ -114,15 +115,38 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
-// loadSingleSymbol fetches the memory address for a specific variable directly
+func normalizeType(rawType string, size uint32) string {
+	switch rawType {
+	case "BOOL", "BYTE", "USINT", "SINT", "UINT", "WORD", "UDINT", "DWORD", "INT", "DINT", "REAL", "LREAL", "TIME", "DT", "TOD":
+		return rawType
+	}
+
+	if strings.HasPrefix(rawType, "STRING") || strings.HasPrefix(rawType, "WSTRING") {
+		return rawType
+	}
+
+	// Alias detection: If the custom type name contains "String" (e.g. T_MaxString)
+	if strings.Contains(strings.ToUpper(rawType), "STRING") {
+		return "STRING"
+	}
+
+	// Enum fallback: Map unknown types to integers based on their byte size
+	switch size {
+	case 1:
+		return "USINT"
+	case 2:
+		return "INT" // Most TwinCAT enums evaluate to a 2-byte INT
+	case 4:
+		return "DINT" // Some large enums evaluate to a 4-byte DINT
+	}
+
+	return rawType // Return raw type if we can't guess it
+}
+
 func loadSingleSymbol(ctx context.Context, client *goads.Client, name string) error {
-	// PADDING TRICK: The library bounds ReadLength to the length of the data we send.
-	// We pad the string with zeros out to 512 bytes so TwinCAT has enough room
-	// to return the full symbol metadata struct.
 	reqData := make([]byte, 512)
 	copy(reqData, name)
 
-	// ADSIndexGroupSymInfByNameEx is 0xF009
 	respData, err := client.ReadWrite(ctx, 0xF009, 0, reqData)
 	if err != nil {
 		return err
@@ -141,18 +165,18 @@ func loadSingleSymbol(ctx context.Context, client *goads.Client, name string) er
 	nameLen := int(binary.LittleEndian.Uint16(respData[24:26]))
 	typeLen := int(binary.LittleEndian.Uint16(respData[26:28]))
 
-	// Extract the TwinCAT Type (e.g., "BOOL", "LREAL", "INT")
 	relOffset := 30 + nameLen + 1
 	if len(respData) < relOffset+typeLen {
 		return fmt.Errorf("malformed type data length for %s", name)
 	}
 
-	symbol.Type = string(respData[relOffset : relOffset+typeLen])
-	symbol.Name = name // Force it to perfectly match your Telegraf config casing
+	rawType := string(respData[relOffset : relOffset+typeLen])
 
-	// Register it with the library so Gather() can read it
+	// Apply the type normalizer to the incoming TwinCAT type
+	symbol.Type = normalizeType(rawType, symbol.Size)
+	symbol.Name = name
+
 	client.AddSymbol(symbol)
-
 	return nil
 }
 
