@@ -12,12 +12,19 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
+type SymbolConfig struct {
+	Name        string `toml:"name"`
+	Key         string `toml:"key"`
+	DisplayName string `toml:"display_name"`
+	Unit        string `toml:"unit"`
+}
+
 type ADS struct {
-	IP          string   `toml:"ip"`
-	NetID       string   `toml:"netid"`
-	Port        int      `toml:"port"`
-	SourceNetID string   `toml:"source_netid"`
-	Symbols     []string `toml:"symbols"`
+	IP          string         `toml:"ip"`
+	NetID       string         `toml:"netid"`
+	Port        int            `toml:"port"`
+	SourceNetID string         `toml:"source_netid"`
+	Symbols     []SymbolConfig `toml:"symbol"`
 
 	client *goads.Client
 }
@@ -32,14 +39,13 @@ func (a *ADS) SampleConfig() string {
   netid = "192.168.1.10.1.1"
   port = 851
   source_netid = "192.168.1.10.1.3"
-  symbols = [
-    "MAIN.Temperature"
-  ]
-`
+
+  [[inputs.ads.symbol]]
+    name = "MAIN.Temperature"
+    key = "temperature"`
 }
 
 func (a *ADS) Start(acc telegraf.Accumulator) error {
-	// NO symbol loading options. We will do it manually.
 	opts := []goads.Option{}
 
 	if a.SourceNetID != "" {
@@ -66,7 +72,7 @@ func (a *ADS) Start(acc telegraf.Accumulator) error {
 
 	// Look up only the symbols specifically requested in telegraf.conf
 	for _, sym := range a.Symbols {
-		err := loadSingleSymbol(ctx, a.client, sym)
+		err := loadSingleSymbol(ctx, a.client, sym.Name)
 		if err != nil {
 			// Add an error so Telegraf logs it, but continue trying to load the rest
 			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", sym, err))
@@ -89,26 +95,39 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 		return fmt.Errorf("ADS client is not connected")
 	}
 
-	fields := make(map[string]interface{})
-
 	for _, sym := range a.Symbols {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		val, err := a.client.ReadByName(ctx, sym)
+		val, err := a.client.ReadByName(ctx, sym.Name)
 		cancel()
 
 		if err != nil {
 			acc.AddError(fmt.Errorf("error reading symbol %s: %v", sym, err))
 			continue
 		}
+		fieldKey := sym.Key
+		if fieldKey == "" {
+			fieldKey = sym.Name
+		}
 
-		fields[sym] = val
-	}
-
-	if len(fields) > 0 {
 		tags := map[string]string{
 			"netid": a.NetID,
 			"ip":    a.IP,
 		}
+
+		if sym.DisplayName != "" {
+			tags["display_name"] = sym.DisplayName
+		}
+		if sym.Unit != "" {
+			tags["unit"] = sym.Unit
+		}
+		if sym.Key != "" {
+			tags["plc_symbol"] = sym.Name
+		}
+
+		fields := map[string]interface{}{
+			fieldKey: val,
+		}
+
 		acc.AddFields("ads", fields, tags)
 	}
 
