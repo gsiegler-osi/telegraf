@@ -17,14 +17,16 @@ type SymbolConfig struct {
 	Key         string `toml:"key"`
 	DisplayName string `toml:"display_name"`
 	Unit        string `toml:"unit"`
+	Type        string `toml:"type"`
 }
 
 type ADS struct {
-	IP          string         `toml:"ip"`
-	NetID       string         `toml:"netid"`
-	Port        int            `toml:"port"`
-	SourceNetID string         `toml:"source_netid"`
-	Symbols     []SymbolConfig `toml:"symbol"`
+	IP             string         `toml:"ip"`
+	NetID          string         `toml:"netid"`
+	Port           int            `toml:"port"`
+	SourceNetID    string         `toml:"source_netid"`
+	WatchdogSymbol string         `toml:"watchdog_symbol"`
+	Symbols        []SymbolConfig `toml:"symbol"`
 
 	client *goads.Client
 }
@@ -75,7 +77,14 @@ func (a *ADS) Start(acc telegraf.Accumulator) error {
 		err := loadSingleSymbol(ctx, a.client, sym.Name)
 		if err != nil {
 			// Add an error so Telegraf logs it, but continue trying to load the rest
-			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", sym, err))
+			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", sym.Name, err))
+		}
+	}
+	if a.WatchdogSymbol != "" {
+		err := loadSingleSymbol(ctx, a.client, a.WatchdogSymbol)
+		if err != nil {
+			// Add an error so Telegraf logs it, but continue trying to load the rest
+			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.WatchdogSymbol, err))
 		}
 	}
 
@@ -101,7 +110,7 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 		cancel()
 
 		if err != nil {
-			acc.AddError(fmt.Errorf("error reading symbol %s: %v", sym, err))
+			acc.AddError(fmt.Errorf("error reading symbol %s: %v", sym.Name, err))
 			continue
 		}
 		fieldKey := sym.Key
@@ -123,12 +132,28 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 		if sym.Key != "" {
 			tags["plc_symbol"] = sym.Name
 		}
+		if sym.Type != "" {
+			tags["type"] = sym.Type
+		}
+		if sym.Key != "" {
+			tags["key"] = sym.Key
+		}
 
 		fields := map[string]interface{}{
 			fieldKey: val,
 		}
 
 		acc.AddFields("ads", fields, tags)
+	}
+
+	if a.WatchdogSymbol != "" && a.client != nil {
+		go func() {
+			// Write the boolean value 'true' to the PLC
+			err := a.client.WriteByName(context.Background(), a.WatchdogSymbol, []byte{1})
+			if err != nil {
+				acc.AddError(fmt.Errorf("failed to write watchdog heartbeat: %v", err))
+			}
+		}()
 	}
 
 	return nil
