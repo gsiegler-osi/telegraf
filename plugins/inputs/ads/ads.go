@@ -74,16 +74,22 @@ func (a *ADS) Start(acc telegraf.Accumulator) error {
 
 	// Look up only the symbols specifically requested in telegraf.conf
 	for _, sym := range a.Symbols {
-		err := loadSingleSymbol(ctx, a.client, sym.Name)
+		// Use a fresh context for each symbol so a single failure doesn't kill the rest
+		symCtx, symCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := loadSingleSymbol(symCtx, a.client, sym.Name)
+		symCancel()
+
 		if err != nil {
-			// Add an error so Telegraf logs it, but continue trying to load the rest
 			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", sym.Name, err))
 		}
 	}
+
 	if a.WatchdogSymbol != "" {
-		err := loadSingleSymbol(ctx, a.client, a.WatchdogSymbol)
+		wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := loadSingleSymbol(wdCtx, a.client, a.WatchdogSymbol)
+		wdCancel()
+
 		if err != nil {
-			// Add an error so Telegraf logs it, but continue trying to load the rest
 			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.WatchdogSymbol, err))
 		}
 	}
@@ -104,6 +110,9 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 		return fmt.Errorf("ADS client is not connected")
 	}
 
+	// 1. Snapshot the exact time for database alignment
+	cycleTime := time.Now()
+
 	for _, sym := range a.Symbols {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		val, err := a.client.ReadByName(ctx, sym.Name)
@@ -113,42 +122,36 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 			acc.AddError(fmt.Errorf("error reading symbol %s: %v", sym.Name, err))
 			continue
 		}
+
 		fieldKey := sym.Key
 		if fieldKey == "" {
 			fieldKey = sym.Name
 		}
 
-		tags := map[string]string{
-			"netid": a.NetID,
-			"ip":    a.IP,
-		}
-
+		tags := map[string]string{"netid": a.NetID, "ip": a.IP}
 		if sym.DisplayName != "" {
 			tags["display_name"] = sym.DisplayName
 		}
 		if sym.Unit != "" {
 			tags["unit"] = sym.Unit
 		}
-		if sym.Key != "" {
-			tags["plc_symbol"] = sym.Name
-		}
 		if sym.Type != "" {
 			tags["type"] = sym.Type
 		}
 		if sym.Key != "" {
 			tags["key"] = sym.Key
+			tags["plc_symbol"] = sym.Name
 		}
 
-		fields := map[string]interface{}{
-			fieldKey: val,
-		}
+		fields := map[string]interface{}{fieldKey: val}
 
-		acc.AddFields("ads", fields, tags)
+		// Emit the single, pure standard metric
+		acc.AddFields("ads", fields, tags, cycleTime)
 	}
 
+	// Watchdog Ping
 	if a.WatchdogSymbol != "" && a.client != nil {
 		go func() {
-			// Write the boolean value 'true' to the PLC
 			err := a.client.WriteByName(context.Background(), a.WatchdogSymbol, []byte{1})
 			if err != nil {
 				acc.AddError(fmt.Errorf("failed to write watchdog heartbeat: %v", err))
@@ -169,22 +172,20 @@ func normalizeType(rawType string, size uint32) string {
 		return rawType
 	}
 
-	// Alias detection: If the custom type name contains "String" (e.g. T_MaxString)
 	if strings.Contains(strings.ToUpper(rawType), "STRING") {
 		return "STRING"
 	}
 
-	// Enum fallback: Map unknown types to integers based on their byte size
 	switch size {
 	case 1:
 		return "USINT"
 	case 2:
-		return "INT" // Most TwinCAT enums evaluate to a 2-byte INT
+		return "INT"
 	case 4:
-		return "DINT" // Some large enums evaluate to a 4-byte DINT
+		return "DINT"
 	}
 
-	return rawType // Return raw type if we can't guess it
+	return rawType
 }
 
 func loadSingleSymbol(ctx context.Context, client *goads.Client, name string) error {
@@ -216,7 +217,6 @@ func loadSingleSymbol(ctx context.Context, client *goads.Client, name string) er
 
 	rawType := string(respData[relOffset : relOffset+typeLen])
 
-	// Apply the type normalizer to the incoming TwinCAT type
 	symbol.Type = normalizeType(rawType, symbol.Size)
 	symbol.Name = name
 
