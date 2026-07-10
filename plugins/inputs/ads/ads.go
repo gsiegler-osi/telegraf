@@ -13,11 +13,13 @@ import (
 )
 
 type SymbolConfig struct {
-	Name        string `toml:"name"`
-	Key         string `toml:"key"`
-	DisplayName string `toml:"display_name"`
-	Unit        string `toml:"unit"`
-	Type        string `toml:"type"`
+	Name        string            `toml:"name"`
+	Key         string            `toml:"key"`
+	DisplayName string            `toml:"display_name"`
+	Unit        string            `toml:"unit"`
+	Tags        map[string]string `toml:"tags"`
+
+	dataType string `toml:"data_type"`
 }
 
 type ADS struct {
@@ -73,14 +75,18 @@ func (a *ADS) Start(acc telegraf.Accumulator) error {
 	}
 
 	// Look up only the symbols specifically requested in telegraf.conf
-	for _, sym := range a.Symbols {
-		// Use a fresh context for each symbol so a single failure doesn't kill the rest
+	for i := range a.Symbols {
 		symCtx, symCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := loadSingleSymbol(symCtx, a.client, sym.Name)
+		err := loadSingleSymbol(symCtx, a.client, a.Symbols[i].Name)
 		symCancel()
 
 		if err != nil {
-			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", sym.Name, err))
+			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.Symbols[i].Name, err))
+		} else {
+			client_symbol, ok := a.client.GetSymbol(a.Symbols[i].Name)
+			if ok {
+				a.Symbols[i].dataType = client_symbol.Type
+			}
 		}
 	}
 
@@ -111,7 +117,7 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 	}
 
 	// 1. Snapshot the exact time for database alignment
-	cycleTime := time.Now()
+	cycleTime := time.Now().UTC()
 
 	for _, sym := range a.Symbols {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -128,15 +134,17 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 			fieldKey = sym.Name
 		}
 
-		tags := map[string]string{"netid": a.NetID, "ip": a.IP}
+		tags := map[string]string{"netid": a.NetID, "ip": a.IP, "datatype": sym.dataType}
 		if sym.DisplayName != "" {
 			tags["display_name"] = sym.DisplayName
 		}
 		if sym.Unit != "" {
 			tags["unit"] = sym.Unit
 		}
-		if sym.Type != "" {
-			tags["type"] = sym.Type
+		if len(sym.Tags) != 0 {
+			for k, v := range sym.Tags {
+				tags[k] = v
+			}
 		}
 		if sym.Key != "" {
 			tags["key"] = sym.Key
