@@ -13,13 +13,11 @@ import (
 )
 
 type SymbolConfig struct {
-	Name        string            `toml:"name"`
-	Key         string            `toml:"key"`
-	DisplayName string            `toml:"display_name"`
-	Unit        string            `toml:"unit"`
-	Tags        map[string]string `toml:"tags"`
+	Name    string            `toml:"name"`
+	Address string            `toml:"address"`
+	Tags    map[string]string `toml:"tags"`
 
-	dataType string `toml:"data_type"`
+	dataType string
 }
 
 type ADS struct {
@@ -46,7 +44,7 @@ func (a *ADS) SampleConfig() string {
 
   [[inputs.ads.symbol]]
     name = "MAIN.Temperature"
-    key = "temperature"`
+    address = "temperature"`
 }
 
 func (a *ADS) Start(acc telegraf.Accumulator) error {
@@ -77,13 +75,13 @@ func (a *ADS) Start(acc telegraf.Accumulator) error {
 	// Look up only the symbols specifically requested in telegraf.conf
 	for i := range a.Symbols {
 		symCtx, symCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := loadSingleSymbol(symCtx, a.client, a.Symbols[i].Name)
+		err := loadSingleSymbol(symCtx, a.client, a.Symbols[i].Address)
 		symCancel()
 
 		if err != nil {
-			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.Symbols[i].Name, err))
+			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.Symbols[i].Address, err))
 		} else {
-			client_symbol, ok := a.client.GetSymbol(a.Symbols[i].Name)
+			client_symbol, ok := a.client.GetSymbol(a.Symbols[i].Address)
 			if ok {
 				a.Symbols[i].dataType = client_symbol.Type
 			}
@@ -121,35 +119,29 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 
 	for _, sym := range a.Symbols {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		val, err := a.client.ReadByName(ctx, sym.Name)
+		val, err := a.client.ReadByName(ctx, sym.Address)
 		cancel()
 
 		if err != nil {
-			acc.AddError(fmt.Errorf("error reading symbol %s: %v", sym.Name, err))
+			acc.AddError(fmt.Errorf("error reading symbol %s: %v", sym.Address, err))
 			continue
 		}
 
-		fieldKey := sym.Key
+		fieldKey := sym.Name
 		if fieldKey == "" {
-			fieldKey = sym.Name
+			fieldKey = sym.Address
 		}
 
 		tags := map[string]string{"netid": a.NetID, "ip": a.IP, "datatype": sym.dataType}
-		if sym.DisplayName != "" {
-			tags["display_name"] = sym.DisplayName
-		}
-		if sym.Unit != "" {
-			tags["unit"] = sym.Unit
-		}
 		if len(sym.Tags) != 0 {
 			for k, v := range sym.Tags {
 				tags[k] = v
 			}
 		}
-		if sym.Key != "" {
-			tags["key"] = sym.Key
-			tags["plc_symbol"] = sym.Name
+		if sym.Name != "" {
+			tags["name"] = sym.Name
 		}
+		tags["address"] = sym.Address
 
 		fields := map[string]interface{}{fieldKey: val}
 
