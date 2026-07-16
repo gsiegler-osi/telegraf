@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
-	goads "github.com/expo21xx/go-ads"
+	goads "github.com/gsiegler-osi/go-ads"
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
@@ -21,12 +22,14 @@ type SymbolConfig struct {
 }
 
 type ADS struct {
-	IP             string         `toml:"ip"`
-	NetID          string         `toml:"netid"`
-	Port           int            `toml:"port"`
-	SourceNetID    string         `toml:"source_netid"`
-	WatchdogSymbol string         `toml:"watchdog_symbol"`
-	Symbols        []SymbolConfig `toml:"symbol"`
+	IP             string `toml:"ip"`
+	NetID          string `toml:"netid"`
+	Port           int    `toml:"port"`
+	SourceNetID    string `toml:"source_netid"`
+	SourcePort     int    `toml:"source_port"`
+	WatchdogSymbol string `toml:"watchdog_symbol"`
+	// TimeSymbol     string         `toml:"time_symbol"`
+	Symbols []SymbolConfig `toml:"symbol"`
 
 	client *goads.Client
 }
@@ -49,6 +52,7 @@ func (a *ADS) SampleConfig() string {
 
 func (a *ADS) Start(acc telegraf.Accumulator) error {
 	opts := []goads.Option{}
+	opts = append(opts, goads.WithLoadSymbolsOnStart())
 
 	if a.SourceNetID != "" {
 		srcNetID, err := goads.ParseNetIDFromString(a.SourceNetID)
@@ -57,6 +61,8 @@ func (a *ADS) Start(acc telegraf.Accumulator) error {
 		}
 		opts = append(opts, goads.WithSourceNetID(srcNetID))
 	}
+	srcPort := goads.NetPort(a.SourcePort)
+	opts = append(opts, goads.WithSourceNetPort(srcPort))
 
 	client, err := goads.NewClient(a.IP, a.NetID, a.Port, opts...)
 	if err != nil {
@@ -72,31 +78,41 @@ func (a *ADS) Start(acc telegraf.Accumulator) error {
 		return fmt.Errorf("failed to connect to ADS server: %w", err)
 	}
 
-	// Look up only the symbols specifically requested in telegraf.conf
-	for i := range a.Symbols {
-		symCtx, symCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := loadSingleSymbol(symCtx, a.client, a.Symbols[i].Address)
-		symCancel()
+	// // Look up only the symbols specifically requested in telegraf.conf
+	// for i := range a.Symbols {
+	// 	symCtx, symCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// 	err := loadSingleSymbol(symCtx, a.client, a.Symbols[i].Address)
+	// 	symCancel()
 
-		if err != nil {
-			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.Symbols[i].Address, err))
-		} else {
-			client_symbol, ok := a.client.GetSymbol(a.Symbols[i].Address)
-			if ok {
-				a.Symbols[i].dataType = client_symbol.Type
-			}
-		}
-	}
+	// 	if err != nil {
+	// 		acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.Symbols[i].Address, err))
+	// 	} else {
+	// 		client_symbol, ok := a.client.GetSymbol(a.Symbols[i].Address)
+	// 		if ok {
+	// 			a.Symbols[i].dataType = client_symbol.Type
+	// 		}
+	// 	}
+	// }
 
-	if a.WatchdogSymbol != "" {
-		wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := loadSingleSymbol(wdCtx, a.client, a.WatchdogSymbol)
-		wdCancel()
+	// if a.WatchdogSymbol != "" {
+	// 	wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// 	err := loadSingleSymbol(wdCtx, a.client, a.WatchdogSymbol)
+	// 	wdCancel()
 
-		if err != nil {
-			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.WatchdogSymbol, err))
-		}
-	}
+	// 	if err != nil {
+	// 		acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.WatchdogSymbol, err))
+	// 	}
+	// }
+
+	// if a.TimeSymbol != "" {
+	// 	wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// 	err := loadSingleSymbol(wdCtx, a.client, a.TimeSymbol)
+	// 	wdCancel()
+
+	// 	if err != nil {
+	// 		acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.TimeSymbol, err))
+	// 	}
+	// }
 
 	return nil
 }
@@ -114,8 +130,21 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 		return fmt.Errorf("ADS client is not connected")
 	}
 
-	// 1. Snapshot the exact time for database alignment
 	cycleTime := time.Now().UTC()
+	// if a.TimeSymbol != "" {
+	// 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// 	plcTime, err := a.client.ReadByName(ctx, a.TimeSymbol)
+	// 	cancel()
+
+	// 	if err != nil {
+	// 		acc.AddError(fmt.Errorf("error reading symbol %s: %v", a.TimeSymbol, err))
+	// 	} else {
+	// 		cycleTime, err = convertTimestamp(plcTime)
+	// 		if err != nil {
+	// 			acc.AddError(fmt.Errorf("error converting timestamp: %v", err))
+	// 		}
+	// 	}
+	// }
 
 	for _, sym := range a.Symbols {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -145,7 +174,6 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 
 		fields := map[string]interface{}{fieldKey: val}
 
-		// Emit the single, pure standard metric
 		acc.AddFields("ads", fields, tags, cycleTime)
 	}
 
@@ -189,10 +217,10 @@ func normalizeType(rawType string, size uint32) string {
 }
 
 func loadSingleSymbol(ctx context.Context, client *goads.Client, name string) error {
-	reqData := make([]byte, 512)
+	reqData := make([]byte, len(name)+1)
 	copy(reqData, name)
 
-	respData, err := client.ReadWrite(ctx, 0xF009, 0, reqData)
+	respData, err := client.ReadWriteWithLen(ctx, 0xF009, 0, reqData, 0xFFFF)
 	if err != nil {
 		return err
 	}
@@ -224,10 +252,47 @@ func loadSingleSymbol(ctx context.Context, client *goads.Client, name string) er
 	return nil
 }
 
+func convertTimestamp(ts any) (time.Time, error) {
+	switch v := ts.(type) {
+
+	case time.Time:
+		return v, nil
+
+	case uint32:
+		return time.Unix(int64(v), 0), nil
+	case int32:
+		return time.Unix(int64(v), 0), nil
+
+	case int64:
+		return time.UnixMilli(v), nil
+	case uint64:
+		return time.UnixMilli(int64(v)), nil
+
+	case float64:
+		return time.UnixMilli(int64(v)), nil
+
+	case string:
+		t, err := time.Parse(time.RFC3339, v)
+		if err == nil {
+			return t, nil
+		}
+
+		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return time.UnixMilli(ms), nil
+		}
+
+		return time.Time{}, fmt.Errorf("could not parse string timestamp: %s", v)
+
+	default:
+		return time.Time{}, fmt.Errorf("unsupported TwinCAT timestamp type: %T", v)
+	}
+}
+
 func init() {
 	inputs.Add("ads", func() telegraf.Input {
 		return &ADS{
-			Port: 851,
+			Port:       851,
+			SourcePort: 32750,
 		}
 	})
 }
