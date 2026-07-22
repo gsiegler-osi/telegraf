@@ -52,7 +52,6 @@ func (a *ADS) SampleConfig() string {
 
 func (a *ADS) Start(acc telegraf.Accumulator) error {
 	opts := []goads.Option{}
-	opts = append(opts, goads.WithLoadSymbolsOnStart())
 
 	if a.SourceNetID != "" {
 		srcNetID, err := goads.ParseNetIDFromString(a.SourceNetID)
@@ -78,31 +77,31 @@ func (a *ADS) Start(acc telegraf.Accumulator) error {
 		return fmt.Errorf("failed to connect to ADS server: %w", err)
 	}
 
-	// // Look up only the symbols specifically requested in telegraf.conf
-	// for i := range a.Symbols {
-	// 	symCtx, symCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	// 	err := loadSingleSymbol(symCtx, a.client, a.Symbols[i].Address)
-	// 	symCancel()
+	// Look up only the symbols specifically requested in telegraf.conf
+	for i := range a.Symbols {
+		symCtx, symCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := loadSingleSymbol(symCtx, a.client, a.Symbols[i].Address)
+		symCancel()
 
-	// 	if err != nil {
-	// 		acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.Symbols[i].Address, err))
-	// 	} else {
-	// 		client_symbol, ok := a.client.GetSymbol(a.Symbols[i].Address)
-	// 		if ok {
-	// 			a.Symbols[i].dataType = client_symbol.Type
-	// 		}
-	// 	}
-	// }
+		if err != nil {
+			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.Symbols[i].Address, err))
+		} else {
+			client_symbol, ok := a.client.GetSymbol(a.Symbols[i].Address)
+			if ok {
+				a.Symbols[i].dataType = client_symbol.Type
+			}
+		}
+	}
 
-	// if a.WatchdogSymbol != "" {
-	// 	wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	// 	err := loadSingleSymbol(wdCtx, a.client, a.WatchdogSymbol)
-	// 	wdCancel()
+	if a.WatchdogSymbol != "" {
+		wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := loadSingleSymbol(wdCtx, a.client, a.WatchdogSymbol)
+		wdCancel()
 
-	// 	if err != nil {
-	// 		acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.WatchdogSymbol, err))
-	// 	}
-	// }
+		if err != nil {
+			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.WatchdogSymbol, err))
+		}
+	}
 
 	// if a.TimeSymbol != "" {
 	// 	wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
