@@ -1563,8 +1563,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.7.0/go.mod h1:hgWBS7lorOAVIJEQMi4Zs
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.11.3/go.mod h1:o//XUCC/F+yRGJoPO/VU0GSB0f8Nhgmxx0VIRUvaC0w=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 h1:5VipnvEpbqr2gA2VbM+nYVbkIF28c5ZQfqCBQ5g2xfk=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0/go.mod h1:Hyl3n6Twe1hvtd9XUXDec4pTvgMSEixRuQKPTMH2bNs=
-github.com/gsiegler-osi/go-ads v0.1.2 h1:fvtEk5SHgSlAjcuqt1BCGsjTZVn6aaAqPXwhOHzllWA=
-github.com/gsiegler-osi/go-ads v0.1.2/go.mod h1:ypfTqf9NYu5UUMt9krL7hY/EUwG5ShCbMIfyb4mFwi0=
+github.com/gsiegler-osi/go-ads v0.1.3 h1:7ZkQowB8bmF4IwlsgKHPA5GKENQ5gkEr8IuyABrjQyM=
+github.com/gsiegler-osi/go-ads v0.1.3/go.mod h1:ypfTqf9NYu5UUMt9krL7hY/EUwG5ShCbMIfyb4mFwi0=
 github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c h1:6rhixN/i8ZofjG1Y75iExal34USq5p+wiN1tpie8IrU=
 github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c/go.mod h1:NMPJylDgVpX0MLRlPy15sqSwOFv/U1GZ2m21JhFfek0=
 github.com/gwos/tcg/sdk v0.0.0-20240830123415-f8a34bba6358 h1:QmKzhYk6KMjUutu9Sy4DyOkRgj1Dv+iFnea4t8KrCZg=

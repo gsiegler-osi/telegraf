@@ -51,68 +51,10 @@ func (a *ADS) SampleConfig() string {
 }
 
 func (a *ADS) Start(acc telegraf.Accumulator) error {
-	opts := []goads.Option{}
-
-	if a.SourceNetID != "" {
-		srcNetID, err := goads.ParseNetIDFromString(a.SourceNetID)
-		if err != nil {
-			return fmt.Errorf("invalid source_netid: %w", err)
-		}
-		opts = append(opts, goads.WithSourceNetID(srcNetID))
-	}
-	srcPort := goads.NetPort(a.SourcePort)
-	opts = append(opts, goads.WithSourceNetPort(srcPort))
-
-	client, err := goads.NewClient(a.IP, a.NetID, a.Port, opts...)
+	err := a.connect(acc)
 	if err != nil {
-		return fmt.Errorf("failed to create ADS client: %w", err)
+		acc.AddError(fmt.Errorf("initial PLC connection failed, will retry on next gather: %v", err))
 	}
-	a.client = client
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err = a.client.Connect(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to connect to ADS server: %w", err)
-	}
-
-	// Look up only the symbols specifically requested in telegraf.conf
-	for i := range a.Symbols {
-		symCtx, symCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := loadSingleSymbol(symCtx, a.client, a.Symbols[i].Address)
-		symCancel()
-
-		if err != nil {
-			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.Symbols[i].Address, err))
-		} else {
-			client_symbol, ok := a.client.GetSymbol(a.Symbols[i].Address)
-			if ok {
-				a.Symbols[i].dataType = client_symbol.Type
-			}
-		}
-	}
-
-	if a.WatchdogSymbol != "" {
-		wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := loadSingleSymbol(wdCtx, a.client, a.WatchdogSymbol)
-		wdCancel()
-
-		if err != nil {
-			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.WatchdogSymbol, err))
-		}
-	}
-
-	// if a.TimeSymbol != "" {
-	// 	wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	// 	err := loadSingleSymbol(wdCtx, a.client, a.TimeSymbol)
-	// 	wdCancel()
-
-	// 	if err != nil {
-	// 		acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.TimeSymbol, err))
-	// 	}
-	// }
-
 	return nil
 }
 
@@ -126,7 +68,10 @@ func (a *ADS) Stop() {
 
 func (a *ADS) Gather(acc telegraf.Accumulator) error {
 	if a.client == nil {
-		return fmt.Errorf("ADS client is not connected")
+		if err := a.connect(acc); err != nil {
+			acc.AddError(fmt.Errorf("reconnect attempt failed: %v", err))
+			return nil // Safely abort this cycle and try again next time
+		}
 	}
 
 	cycleTime := time.Now().UTC()
@@ -152,6 +97,14 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 
 		if err != nil {
 			acc.AddError(fmt.Errorf("error reading symbol %s: %v", sym.Address, err))
+
+			errStr := strings.ToLower(err.Error())
+			if strings.Contains(errStr, "eof") || strings.Contains(errStr, "writing") || strings.Contains(errStr, "connection") {
+				a.client.Close(context.Background())
+				a.client = nil
+				acc.AddError(fmt.Errorf("PLC TCP connection dropped. Forcing a complete reconnect on next cycle."))
+				return nil
+			}
 			continue
 		}
 
@@ -178,12 +131,15 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 
 	// Watchdog Ping
 	if a.WatchdogSymbol != "" && a.client != nil {
-		go func() {
-			err := a.client.WriteByName(context.Background(), a.WatchdogSymbol, []byte{1})
+		go func(c *goads.Client) {
+			wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer wdCancel()
+
+			err := c.WriteByName(wdCtx, a.WatchdogSymbol, []byte{1})
 			if err != nil {
 				acc.AddError(fmt.Errorf("failed to write watchdog heartbeat: %v", err))
 			}
-		}()
+		}(a.client)
 	}
 
 	return nil
@@ -285,6 +241,75 @@ func convertTimestamp(ts any) (time.Time, error) {
 	default:
 		return time.Time{}, fmt.Errorf("unsupported TwinCAT timestamp type: %T", v)
 	}
+}
+
+func (a *ADS) connect(acc telegraf.Accumulator) error {
+	opts := []goads.Option{}
+
+	if a.SourceNetID != "" {
+		srcNetID, err := goads.ParseNetIDFromString(a.SourceNetID)
+		if err != nil {
+			return fmt.Errorf("invalid source_netid: %w", err)
+		}
+		opts = append(opts, goads.WithSourceNetID(srcNetID))
+	}
+
+	srcPort := goads.NetPort(a.SourcePort)
+	opts = append(opts, goads.WithSourceNetPort(srcPort))
+
+	client, err := goads.NewClient(a.IP, a.NetID, a.Port, opts...)
+	if err != nil {
+		return fmt.Errorf("failed to create ADS client: %w", err)
+	}
+
+	a.client = client
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = a.client.Connect(ctx)
+	if err != nil {
+		a.client = nil
+		return fmt.Errorf("failed to connect to ADS server: %w", err)
+	}
+
+	// Re-load all symbols to get fresh IndexOffsets in case the PLC recompiled/restarted
+	for i := range a.Symbols {
+		symCtx, symCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := loadSingleSymbol(symCtx, a.client, a.Symbols[i].Address)
+		symCancel()
+
+		if err != nil {
+			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.Symbols[i].Address, err))
+		} else {
+			client_symbol, ok := a.client.GetSymbol(a.Symbols[i].Address)
+			if ok {
+				a.Symbols[i].dataType = client_symbol.Type
+			}
+		}
+	}
+
+	if a.WatchdogSymbol != "" {
+		wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := loadSingleSymbol(wdCtx, a.client, a.WatchdogSymbol)
+		wdCancel()
+
+		if err != nil {
+			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.WatchdogSymbol, err))
+		}
+	}
+
+	// if a.TimeSymbol != "" {
+	// 	wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// 	err := loadSingleSymbol(wdCtx, a.client, a.TimeSymbol)
+	// 	wdCancel()
+
+	// 	if err != nil {
+	// 		acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.TimeSymbol, err))
+	// 	}
+	// }
+
+	return nil
 }
 
 func init() {
