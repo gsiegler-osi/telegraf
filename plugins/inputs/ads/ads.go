@@ -13,6 +13,16 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
+type ADSClient interface {
+	Connect(ctx context.Context) error
+	Close(ctx context.Context) error
+	ReadByName(ctx context.Context, name string) (interface{}, error)
+	WriteByName(ctx context.Context, name string, data []byte) error
+	ReadWriteWithLen(ctx context.Context, indexGroup uint32, indexOffset uint32, data []byte, readLength uint32) ([]byte, error)
+	AddSymbol(sym goads.Symbol)
+	GetSymbol(name string) (goads.Symbol, bool)
+}
+
 type SymbolConfig struct {
 	Name    string            `toml:"name"`
 	Address string            `toml:"address"`
@@ -22,16 +32,16 @@ type SymbolConfig struct {
 }
 
 type ADS struct {
-	IP             string `toml:"ip"`
-	NetID          string `toml:"netid"`
-	Port           int    `toml:"port"`
-	SourceNetID    string `toml:"source_netid"`
-	SourcePort     int    `toml:"source_port"`
-	WatchdogSymbol string `toml:"watchdog_symbol"`
-	// TimeSymbol     string         `toml:"time_symbol"`
-	Symbols []SymbolConfig `toml:"symbol"`
+	IP             string         `toml:"ip"`
+	NetID          string         `toml:"netid"`
+	Port           int            `toml:"port"`
+	SourceNetID    string         `toml:"source_netid"`
+	SourcePort     int            `toml:"source_port"`
+	WatchdogSymbol string         `toml:"watchdog_symbol"`
+	TimeSymbol     string         `toml:"time_symbol"`
+	Symbols        []SymbolConfig `toml:"symbol"`
 
-	client *goads.Client
+	client ADSClient
 }
 
 func (a *ADS) Description() string {
@@ -75,20 +85,20 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 	}
 
 	cycleTime := time.Now().UTC()
-	// if a.TimeSymbol != "" {
-	// 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	// 	plcTime, err := a.client.ReadByName(ctx, a.TimeSymbol)
-	// 	cancel()
+	if a.TimeSymbol != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		plcTime, err := a.client.ReadByName(ctx, a.TimeSymbol)
+		cancel()
 
-	// 	if err != nil {
-	// 		acc.AddError(fmt.Errorf("error reading symbol %s: %v", a.TimeSymbol, err))
-	// 	} else {
-	// 		cycleTime, err = convertTimestamp(plcTime)
-	// 		if err != nil {
-	// 			acc.AddError(fmt.Errorf("error converting timestamp: %v", err))
-	// 		}
-	// 	}
-	// }
+		if err != nil {
+			acc.AddError(fmt.Errorf("error reading symbol %s: %v", a.TimeSymbol, err))
+		} else {
+			cycleTime, err = convertTimestamp(plcTime)
+			if err != nil {
+				acc.AddError(fmt.Errorf("error converting timestamp: %v", err))
+			}
+		}
+	}
 
 	for _, sym := range a.Symbols {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -131,7 +141,7 @@ func (a *ADS) Gather(acc telegraf.Accumulator) error {
 
 	// Watchdog Ping
 	if a.WatchdogSymbol != "" && a.client != nil {
-		go func(c *goads.Client) {
+		go func(c ADSClient) {
 			wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer wdCancel()
 
@@ -171,7 +181,7 @@ func normalizeType(rawType string, size uint32) string {
 	return rawType
 }
 
-func loadSingleSymbol(ctx context.Context, client *goads.Client, name string) error {
+func loadSingleSymbol(ctx context.Context, client ADSClient, name string) error {
 	reqData := make([]byte, len(name)+1)
 	copy(reqData, name)
 
@@ -227,11 +237,6 @@ func convertTimestamp(ts any) (time.Time, error) {
 		return time.UnixMilli(int64(v)), nil
 
 	case string:
-		t, err := time.Parse(time.RFC3339, v)
-		if err == nil {
-			return t, nil
-		}
-
 		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return time.UnixMilli(ms), nil
 		}
@@ -299,15 +304,15 @@ func (a *ADS) connect(acc telegraf.Accumulator) error {
 		}
 	}
 
-	// if a.TimeSymbol != "" {
-	// 	wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	// 	err := loadSingleSymbol(wdCtx, a.client, a.TimeSymbol)
-	// 	wdCancel()
+	if a.TimeSymbol != "" {
+		wdCtx, wdCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := loadSingleSymbol(wdCtx, a.client, a.TimeSymbol)
+		wdCancel()
 
-	// 	if err != nil {
-	// 		acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.TimeSymbol, err))
-	// 	}
-	// }
+		if err != nil {
+			acc.AddError(fmt.Errorf("failed to load symbol info for %s: %w", a.TimeSymbol, err))
+		}
+	}
 
 	return nil
 }
